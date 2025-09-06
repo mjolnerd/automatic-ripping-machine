@@ -1132,6 +1132,7 @@ def run(options, select):
         makemkvcon_path,
         "--robot",
         "--messages=-stdout",
+        "--noscan",
     ]
     cmd += list(options)
     buffer = []
