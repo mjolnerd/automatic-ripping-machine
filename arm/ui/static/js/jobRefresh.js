@@ -187,17 +187,26 @@ function removeJobItem(job) {
  * Then sorts the jobs in ascending order
  */
 function refreshJobsComplete() {
-    // Loop through all active jobs and remove any that have finished
-    // Notes: This breaks when arm child servers are added
+    // Create a new array to store jobs to be removed
+    let jobsToRemove = [];
+    
+    // Loop through all active jobs and identify those to be removed
     $.each(activeJobs, function (index, job) {
         if (typeof (job) !== "undefined" && !job.active) {
             console.log("Job isn't active:" + job.job_id.split("_")[1]);
-            console.log(job)
-            removeJobItem(job);
-            activeJobs.splice(index, 1);
+            // Instead of removing immediately, add to our removal list
+            jobsToRemove.push(index);
         }
     });
+    
+    // Remove jobs in reverse order to avoid index shifting issues
+    for (let i = jobsToRemove.length - 1; i >= 0; i--) {
+        let index = jobsToRemove[i];
+        removeJobItem(activeJobs[index]);
+        activeJobs.splice(index, 1);
+    }
 
+    // Sort the visible job cards
     $("#joblist .col-md-4").sort(function (a, b) {
         if (a.id === b.id) {
             return 0;
@@ -212,27 +221,29 @@ function refreshJobsComplete() {
 
 /**
  * Function to check for active jobs from the return from api
- * *** This doesn't work as it should when arm has child links
+ * Improved to better handle child servers
  * @param data returned data from ajax
  * @param serverIndex current server index count (added to the front of job id's)
  */
 function checkActiveJobs(data, serverIndex) {
-    // Loop through each active job
+    // Get all job IDs from this server's response
+    const currentServerJobIds = data.results.map(job => `${serverIndex}_${job.job_id}`);
+    
+    // For each active job that belongs to this server, mark it active if it's still in the results
     $.each(activeJobs, function (AJIndex) {
-        // Turn off job active and re-enable it later if we find it
-        activeJobs[AJIndex].active = false;
-        // Loop through each result and search for our active job
-        $.each(data.results, function (_index, job) {
-            console.log(`Looking for ${activeJobs[AJIndex].job_id}!==${serverIndex}_${job.job_id}`)
-            // We found a match for the current job id and the active job id
-            if (activeJobs[AJIndex].job_id === `${serverIndex}_${job.job_id}`) {
-                console.log(`Match found for ${job.job_id}`)
+        const jobIdParts = activeJobs[AJIndex].job_id.split('_');
+        const jobServerIndex = jobIdParts[0];
+        
+        // Only check jobs from this server - leave other servers' jobs alone
+        if (jobServerIndex === String(serverIndex)) {
+            // Mark the job inactive initially
+            activeJobs[AJIndex].active = false;
+            
+            // If we find this job in the current server's results, mark it active
+            if (currentServerJobIds.includes(activeJobs[AJIndex].job_id)) {
                 activeJobs[AJIndex].active = true;
-                return false;
-            } else {
-                console.log(`No match: ${activeJobs[AJIndex].job_id}!==${serverIndex}_${job.job_id}`)
             }
-        });
+        }
     });
 }
 
@@ -282,21 +293,31 @@ function checkNotifications(data) {
  */
 function refreshJobs() {
     let serverCount = activeServers.length;
+    let completedRequests = 0;
+    
     $.each(activeServers, function (serverIndex, serverUrl) {
         $.ajax({
             url: serverUrl + "/json?mode=joblist",
             type: "get",
             timeout: 2000,
             error: function () {
-                --serverCount;
+                completedRequests++;
+                if (completedRequests === activeServers.length) {
+                    refreshJobsComplete();
+                }
             },
             success: function (data) {
-                serverCount = refreshJobsSuccess(data, serverIndex, serverUrl, serverCount);
+                refreshJobsSuccess(data, serverIndex, serverUrl, serverCount);
+                completedRequests++;
+                
+                if(typeof data !== 'undefined') {
+                    checkNotifications(data);
+                }
             },
             complete: function (data) {
-                refreshJobsComplete();
-                if(typeof data !== 'undefined' && data.responseJSON) {
-                    checkNotifications(data.responseJSON);
+                // Only run refreshJobsComplete once all servers have been queried
+                if (completedRequests === activeServers.length) {
+                    refreshJobsComplete();
                 }
             }
         });
