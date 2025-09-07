@@ -187,6 +187,18 @@ function removeJobItem(job) {
  * Then sorts the jobs in ascending order
  */
 function refreshJobsComplete() {
+    // Reset all jobs to inactive first, to detect jobs that are no longer present on any server
+    $.each(activeJobs, function(index, job) {
+        // Don't change jobs marked as active in checkActiveJobs
+        if (job && !job.active_checked) {
+            job.active = false;
+        }
+        // Reset the checked flag for the next refresh cycle
+        if (job) {
+            job.active_checked = false;
+        }
+    });
+    
     // Create a new array to store jobs to be removed
     let jobsToRemove = [];
     
@@ -227,10 +239,21 @@ function refreshJobsComplete() {
  */
 function checkActiveJobs(data, serverIndex) {
     // Get all job IDs from this server's response
-    const currentServerJobIds = data.results.map(job => `${serverIndex}_${job.job_id}`);
+    const currentServerJobIds = [];
+    
+    // Make sure data.results exists and is an array
+    if (data && data.results && Array.isArray(data.results)) {
+        // Collect all job IDs from this server
+        $.each(data.results, function(_, job) {
+            currentServerJobIds.push(`${serverIndex}_${job.job_id}`);
+        });
+    }
     
     // For each active job that belongs to this server, mark it active if it's still in the results
     $.each(activeJobs, function (AJIndex) {
+        // Skip undefined jobs (might happen if jobs were removed)
+        if (!activeJobs[AJIndex]) return;
+        
         const jobIdParts = activeJobs[AJIndex].job_id.split('_');
         const jobServerIndex = jobIdParts[0];
         
@@ -240,7 +263,7 @@ function checkActiveJobs(data, serverIndex) {
             activeJobs[AJIndex].active = false;
             
             // If we find this job in the current server's results, mark it active
-            if (currentServerJobIds.includes(activeJobs[AJIndex].job_id)) {
+            if (currentServerJobIds.indexOf(activeJobs[AJIndex].job_id) !== -1) {
                 activeJobs[AJIndex].active = true;
             }
         }
@@ -256,15 +279,27 @@ function checkActiveJobs(data, serverIndex) {
  * @returns {*}
  */
 function refreshJobsSuccess(data, serverIndex, serverUrl, serverCount) {
+    // Make sure data is valid and has results
+    if (!data || !data.results || !Array.isArray(data.results)) {
+        console.log("No valid data or results from server:", serverUrl);
+        return serverCount;
+    }
+    
     checkActiveJobs(data, serverIndex);
+    
     $.each(data.results, function (_index, job) {
-        console.log(job.job_id)
+        // Skip if job doesn't have an ID
+        if (!job || !job.job_id) return;
+        
+        console.log(job.job_id);
         job.job_id = `${serverIndex}_${job.job_id}`;
         job.ripper = (data.arm_name ? data.arm_name : "");
         job.server_url = serverUrl;
         job.active = true;
-        if (activeJobs.some(e => e.job_id === job.job_id)) {
-            var oldJob = activeJobs.find(e => e.job_id === job.job_id);
+        job.active_checked = true; // Mark as checked to prevent being marked inactive
+        
+        if (activeJobs.some(e => e && e.job_id === job.job_id)) {
+            var oldJob = activeJobs.find(e => e && e.job_id === job.job_id);
             activeJobs[activeJobs.indexOf(oldJob)] = job;
             updateJobItem(oldJob, job);
         } else {
